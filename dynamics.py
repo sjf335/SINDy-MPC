@@ -1,7 +1,6 @@
-"""State construction using only the current/past provided pose samples."""
+"""Body-frame acceleration targets, pose-derived rates and discrete kinematics."""
 import numpy as np
 from scipy.spatial.transform import Rotation
-from scipy.signal import lfilter
 
 
 def rotate(q, v, inverse=False):
@@ -22,18 +21,7 @@ def qexp(rotvec):
     return np.concatenate([rotvec*factor[..., None], np.cos(angle/2)[..., None]], axis=-1)
 
 
-def motor_estimate(u, motor_model):
-    """Only command history and E1 coefficients; no reported motor measurement."""
-    a = np.asarray(motor_model['poles'])
-    coef = np.asarray(motor_model['coefficients'])
-    steady = u*coef[:, 0]+coef[:, 1]
-    result = np.empty_like(steady)
-    for m in range(4):
-        result[:, m] = lfilter([1-a[m]], [1, -a[m]], steady[:, m], zi=[a[m]*steady[0, m]])[0]
-    return result
-
-
-def prepare_flight(raw, flight_id, dt, motor_model):
+def prepare_flight(raw, flight_id, dt):
     position = np.asarray(raw['Pos'], dtype=float)
     orientation = Rotation.from_euler('xyz', raw['Euler'])
     quaternion = orientation.as_quat()
@@ -43,10 +31,9 @@ def prepare_flight(raw, flight_id, dt, motor_model):
     omega = (orientation[:-1].inv()*orientation[1:]).as_rotvec()/dt
     x = np.c_[position[1:], velocity, quaternion[1:], omega]
     u = np.asarray(raw['Motors_CMD'], dtype=float)[1:].copy()
-    mhat = motor_estimate(np.asarray(raw['Motors_CMD']), motor_model)[1:]
     if not np.isfinite(x).all() or not np.isfinite(u).all():
         raise ValueError('Nonfinite prepared state; no silent imputation')
-    return {'id': int(flight_id), 'x': x, 'u': u, 'motor_hat': mhat,
+    return {'id': int(flight_id), 'x': x, 'u': u,
             't': np.arange(1, len(position))*dt,
             'raw_index': np.arange(1, len(position), dtype=np.int64)}
 

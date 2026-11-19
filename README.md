@@ -1,17 +1,20 @@
-# SINDy-MPC
+﻿# SINDy-MPC
 
-Research code for **SINDy-MPC with History Augmentation and Bias Compensation for Quadrotor Trajectory Tracking** by Junfeng Shen, Huihui Li, Biao Chen, and Jing Wang (MEAE 2026).
+Method implementation for *SINDy-MPC with History Augmentation and Bias Compensation for Quadrotor Trajectory Tracking* by Junfeng Shen, Huihui Li, Biao Chen, and Jing Wang.
 
-The controller uses lagged motion and motor-command differences to predict body-frame accelerations. A hover calibration and a filtered residual estimate correct the predictions used by MPC.
+## Train the predictor
 
-## Source code
+Use Python 3.11 and the original AscTec Pelican flight MAT file from [WAVELab](https://github.com/wavelab/pelican_dataset).
 
-- [Model identification and hyperparameter search](method/scripts/run_pelican_e2.py)
-- [Sparse feature library](method/pelican_e2/model.py) and [flight-data preparation](method/pelican_e2/data.py)
-- [Controller, equilibrium calibration and bias observer](method/pelican_e3_corrected/control.py)
-- [Component ablation](method/scripts/run_component_ablation.py), [noise and disturbance tests](method/scripts/run_pelican_noise_pulse.py), and [timing measurements](method/scripts/profile_pelican_realtime.py)
-- [Paired statistical analysis](method/scripts/reproduce_paper_statistics.py), [model replay](method/scripts/replay_paper_models.py), and [figure generation](latex/scripts/)
+```sh
+python -m pip install -r requirements.txt
+python train.py path/to/AscTec_Pelican_Flight_Dataset.mat --out fitted_history_model.json
+```
 
-## Run the code
+`train.py` reproduces the 32/11/11 whole-flight split, fits the 18 history-model candidates, and selects the configuration from validation flights. The output JSON contains the fitted coefficients, feature scales, selected parameters and flight IDs. `dynamics.py` constructs the states and body-frame targets from pose and motor commands. `identification.py` builds the lagged feature library, fits the sparse regression, and scores multistep predictions.
 
-The project uses Python 3.11. Install the dependencies from `method/requirements.txt`. The statistical and replay scripts expect the archived model and experiment inputs from the paper's accompanying reproducibility supplement. Extract that supplement under `method/` before running those entry points. The data provider distributes the original flight logs through the [WAVELab Pelican repository](https://github.com/wavelab/pelican_dataset).
+## Use the controller
+
+`controller.py` implements the hover correction, residual observer, constrained MPC and bounded fallback. The caller supplies the vehicle's hover command, motor command limits, and parameters for fallback allocation. The paper lists the MPC cost weights, solver settings, and observer limits in Table I and Section III-B.
+
+Load the fitted model into NumPy arrays, apply `calibrate_equilibrium(model, cfg, parameters)`, and construct `BiasMPC(corrected_model, parameters, cfg)`. Initialize `BiasObserver(mpc.transition, cfg['dt'], observer_settings)`. At each 0.05 s control tick, call `control_update` with the measured history, applied command history and the ten end-of-interval reference states. At each 0.01 s observation step, call `observer.update` with the packed state at the start of the interval, the command actually applied, and the newly observed state. Quaternions follow the `xyzw` convention.
